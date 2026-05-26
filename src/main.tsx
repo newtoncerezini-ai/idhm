@@ -116,6 +116,21 @@ function scoreColor(value: number | null) {
   return "#c94f55";
 }
 
+function expandedDomain(values: number[]) {
+  if (!values.length) return [0, 1] as [number, number];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const spread = Math.max(0.02, max - min);
+  const padding = Math.max(0.015, spread * 0.35);
+  const lower = Math.max(0, min - padding);
+  const upper = Math.min(1, max + padding);
+  if (upper - lower < 0.08) {
+    const center = (upper + lower) / 2;
+    return [Math.max(0, center - 0.04), Math.min(1, center + 0.04)] as [number, number];
+  }
+  return [lower, upper] as [number, number];
+}
+
 function rankTone(ranks?: { br?: RankInfo | null }) {
   const rank = ranks?.br;
   if (!rank) return "empty";
@@ -556,6 +571,8 @@ function ChartsPage({ data, year }: { data: DashboardData; year: number }) {
 function RadarPanel({ rows }: { rows: RecordRow[] }) {
   const [codes, setCodes] = useState(["PERNAMBUCO", "SÃO PAULO", "CEARÁ"]);
   const selectedRows = codes.map((code) => rows.find((row) => row.code === code)).filter((row): row is RecordRow => Boolean(row));
+  const radarValues = selectedRows.flatMap((row) => CORE.map((indicator) => getValue(row, indicator))).filter((value): value is number => typeof value === "number");
+  const radarDomain = expandedDomain(radarValues);
   const radarData = CORE.map((indicator) => {
     const item: Record<string, string | number | null> = { indicator };
     selectedRows.forEach((row) => { item[row.territory] = getValue(row, indicator); });
@@ -564,14 +581,14 @@ function RadarPanel({ rows }: { rows: RecordRow[] }) {
 
   return (
     <section className="panel chart-panel">
-      <PanelTitle title="Comparação de UFs" subtitle="Selecione até 6 estados para comparar IDHM e dimensões principais." />
+      <PanelTitle title="Comparação de UFs" subtitle={`Selecione até 6 estados para comparar IDHM e dimensões principais. Escala ampliada: ${formatNumber(radarDomain[0])} a ${formatNumber(radarDomain[1])}.`} />
       <StateChipPicker rows={rows} codes={codes} max={6} onChange={setCodes} />
       <div className="large-chart">
         <ResponsiveContainer>
           <RadarChart data={radarData} outerRadius="76%">
             <PolarGrid />
             <PolarAngleAxis dataKey="indicator" tick={{ fontSize: 12 }} />
-            <PolarRadiusAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
+            <PolarRadiusAxis domain={radarDomain} tick={{ fontSize: 11 }} tickFormatter={(value) => formatNumber(Number(value))} />
             <Tooltip formatter={(value) => formatNumber(Number(value))} />
             <Legend />
             {selectedRows.map((row, index) => (
