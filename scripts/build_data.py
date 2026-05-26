@@ -35,6 +35,8 @@ COMPONENTS = [
     "IDHM Educação Ajustado à Desigualdade",
 ]
 
+PANEL_START_YEAR = 2010
+
 UF_REGIONS = {
     "Acre": "Norte",
     "Amapá": "Norte",
@@ -86,7 +88,7 @@ def parse_header(value: object) -> tuple[str, int] | None:
     if not match:
         return None
     indicator, year = match.group(1).strip(), int(match.group(2))
-    if indicator not in BASE_INDICATORS:
+    if year < PANEL_START_YEAR or indicator not in BASE_INDICATORS:
         return None
     return indicator, year
 
