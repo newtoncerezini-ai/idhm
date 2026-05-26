@@ -720,14 +720,12 @@ function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indica
     "Pernambuco",
   ]);
   const chartPoints = points.map((item) => ({ ...item, label: labeled.has(item.name) ? item.name : "" }));
-  const regression = linearRegression(points);
-  const xValues = points.map((item) => item.x);
-  const regressionLine = xValues.length
-    ? [
-        { x: Math.min(...xValues), y: regression.slope * Math.min(...xValues) + regression.intercept },
-        { x: Math.max(...xValues), y: regression.slope * Math.max(...xValues) + regression.intercept },
-      ]
-    : [];
+  const axisMax = Math.max(0.9, ...points.flatMap((item) => [item.x, item.y])) + 0.01;
+  const axisDomain = [0.6, Math.min(1, axisMax)] as [number, number];
+  const bisectorLine = [
+    { x: axisDomain[0], y: axisDomain[0] },
+    { x: axisDomain[1], y: axisDomain[1] },
+  ];
 
   return (
     <section className="panel chart-panel">
@@ -740,13 +738,13 @@ function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indica
         <ResponsiveContainer>
           <ScatterChart margin={{ top: 20, right: 34, bottom: 36, left: 12 }}>
             <CartesianGrid stroke="#e2e8f0" />
-            <XAxis type="number" dataKey="x" name={xIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
-            <YAxis type="number" dataKey="y" name={yIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
+            <XAxis type="number" dataKey="x" name={xIndicator} domain={axisDomain} tick={{ fontSize: 12 }} />
+            <YAxis type="number" dataKey="y" name={yIndicator} domain={axisDomain} tick={{ fontSize: 12 }} />
             <Tooltip cursor={{ strokeDasharray: "3 3" }} content={<RegressionTooltip xLabel={xIndicator} yLabel={yIndicator} />} />
             <Scatter name="Territórios" data={chartPoints} fill="#006591" fillOpacity={0.7}>
               <LabelList dataKey="label" position="right" className="scatter-label" />
             </Scatter>
-            <Line type="linear" data={regressionLine} dataKey="y" stroke="#0f172a" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="linear" data={bisectorLine} dataKey="y" stroke="#0f172a" strokeWidth={2} dot={false} isAnimationActive={false} name="Bissetriz" />
           </ScatterChart>
         </ResponsiveContainer>
       </div>
