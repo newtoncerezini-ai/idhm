@@ -36,6 +36,10 @@ COMPONENTS = [
 ]
 
 PANEL_START_YEAR = 2010
+DISAGG_GROUPS = {"HOMEM", "MULHER", "BRANCO", "NEGRO"}
+DISAGG_INDICATORS = {"IDHM", "IDHM Renda", "IDHM Longevidade", "IDHM Educação"}
+DISAGG_CENSO_YEARS = [1991, 2000, 2010]
+DISAGG_PNAD_YEARS = list(range(2012, 2025))
 
 UF_REGIONS = {
     "Acre": "Norte",
@@ -93,6 +97,39 @@ def parse_header(value: object) -> tuple[str, int] | None:
     return indicator, year
 
 
+def parse_disagg_header(value: object) -> tuple[str, str, str] | None:
+    header = str(value or "").strip()
+    match = re.match(r"Desagregação\s+(\S+)\s+(.+?)\s+(Censo|PNAD)$", header)
+    if not match:
+        return None
+    group, indicator, source = match.groups()
+    if group not in DISAGG_GROUPS or indicator not in DISAGG_INDICATORS:
+        return None
+    return group, indicator, source
+
+
+def disagg_columns(headers) -> list[tuple[int, str, str, str, int]]:
+    columns = []
+    index = 0
+    while index < len(headers):
+        parsed = parse_disagg_header(headers[index])
+        if not parsed:
+            index += 1
+            continue
+
+        group, indicator, source = parsed
+        end = index
+        while end < len(headers) and headers[end] == headers[index]:
+            end += 1
+
+        years = DISAGG_CENSO_YEARS if source == "Censo" else DISAGG_PNAD_YEARS
+        for offset, year in enumerate(years[: end - index]):
+            if year >= PANEL_START_YEAR:
+                columns.append((index + offset, group, indicator, source, year))
+        index = end
+    return columns
+
+
 def rank_map(rows: list[dict], indicators: list[str]) -> dict[str, dict[str, dict]]:
     ranks: dict[str, dict[str, dict]] = {}
     for indicator in indicators:
@@ -116,8 +153,10 @@ def main():
     rows = list(ws.iter_rows(values_only=True))
     headers = rows[0]
     parsed_headers = [(index, parsed) for index, header in enumerate(headers) if (parsed := parse_header(header))]
+    parsed_disagg_headers = disagg_columns(headers)
 
     records = []
+    disaggregated_records = []
     notes = []
     for source in rows[1:]:
         territory = str(source[0] or "").strip()
@@ -145,6 +184,26 @@ def main():
                 }
             )
 
+        disagg_values_by_key: dict[tuple[int, str, str], dict[str, float | None]] = {}
+        for index, group, indicator, source_name, year in parsed_disagg_headers:
+            value = num(source[index])
+            if value is None:
+                continue
+            disagg_values_by_key.setdefault((year, group, source_name), {})[indicator] = value
+
+        for (year, group, source_name), values in sorted(disagg_values_by_key.items()):
+            disaggregated_records.append(
+                {
+                    "year": year,
+                    "code": code,
+                    "territory": territory,
+                    "region": region,
+                    "group": group,
+                    "source": source_name,
+                    "values": values,
+                }
+            )
+
     indicators = sorted({indicator for record in records for indicator in record["values"]})
     by_year: dict[int, list[dict]] = {}
     for record in records:
@@ -166,6 +225,8 @@ def main():
 
     payload = {
         "records": records,
+        "disaggregatedRecords": disaggregated_records,
+        "disaggregatedGroups": sorted(DISAGG_GROUPS),
         "regions": sorted({row["region"] for row in records if row["region"] != "Brasil"}),
         "indicators": indicators,
         "indicatorPolarity": {
@@ -182,7 +243,7 @@ def main():
     with (PUBLIC / "dashboard.json").open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
 
-    print(f"Gerado {PUBLIC / 'dashboard.json'} com {len(records)} registros.")
+    print(f"Gerado {PUBLIC / 'dashboard.json'} com {len(records)} registros e {len(disaggregated_records)} registros estratificados.")
 
 
 if __name__ == "__main__":

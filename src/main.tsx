@@ -10,6 +10,7 @@ import {
   Search,
   SlidersHorizontal,
   Table2,
+  UsersRound,
 } from "lucide-react";
 import {
   Bar,
@@ -43,8 +44,19 @@ type RecordRow = {
   values: Record<string, number | null>;
   ranks: Record<string, { br?: RankInfo | null; region?: RankInfo | null }>;
 };
+type DisaggregatedRecord = {
+  year: number;
+  code: string;
+  territory: string;
+  region: string;
+  group: string;
+  source: string;
+  values: Record<string, number | null>;
+};
 type DashboardData = {
   records: RecordRow[];
+  disaggregatedRecords: DisaggregatedRecord[];
+  disaggregatedGroups: string[];
   regions: string[];
   indicators: string[];
   dimensions: string[];
@@ -53,13 +65,19 @@ type DashboardData = {
   sourceNote: string;
 };
 
-type View = "overview" | "ranking" | "map" | "scorecard" | "charts" | "dictionary";
+type View = "overview" | "ranking" | "map" | "scorecard" | "charts" | "inequalities" | "dictionary";
 type ChartTab = "radar" | "regression" | "temporal";
 
 const IDHM = "IDHM";
 const CORE = ["IDHM", "IDHM Renda", "IDHM Longevidade", "IDHM Educação"];
 const COLORS = ["#006591", "#f97316", "#16a34a", "#7c3aed", "#dc2626", "#0f172a"];
 const MAP_PALETTE = ["#005a8d", "#1597e5", "#8cc7f2", "#fff28a", "#f7bd08", "#ff922e", "#c94f55"];
+const GROUP_LABELS: Record<string, string> = { HOMEM: "Homens", MULHER: "Mulheres", BRANCO: "Brancos", NEGRO: "Negros" };
+const INEQUALITY_PAIRS = {
+  gender: { label: "Mulheres x Homens", a: "MULHER", b: "HOMEM", gapLabel: "Mulheres - Homens" },
+  race: { label: "Brancos x Negros", a: "BRANCO", b: "NEGRO", gapLabel: "Brancos - Negros" },
+};
+type InequalityPairKey = keyof typeof INEQUALITY_PAIRS;
 
 function formatNumber(value: number | null | undefined, digits = 3) {
   if (value == null || Number.isNaN(value)) return "-";
@@ -77,6 +95,25 @@ function getValue(row: RecordRow, indicator: string) {
 
 function getOptionalValue(row: RecordRow | undefined, indicator: string) {
   return row ? getValue(row, indicator) : null;
+}
+
+function getDisaggValue(records: DisaggregatedRecord[], code: string, year: number, group: string, indicator: string) {
+  const row = records.find((item) => item.code === code && item.year === year && item.group === group);
+  return row?.values[indicator] ?? null;
+}
+
+function territoryRows(data: DashboardData, year: number, includeBrazil = true) {
+  return data.records
+    .filter((row) => row.year === year && (includeBrazil || row.territory !== "Brasil"))
+    .sort((a, b) => {
+      if (a.territory === "Brasil") return -1;
+      if (b.territory === "Brasil") return 1;
+      return a.territory.localeCompare(b.territory, "pt-BR");
+    });
+}
+
+function groupLabel(group: string) {
+  return GROUP_LABELS[group] ?? group;
 }
 
 function isLowerBetter(indicator: string) {
@@ -193,6 +230,7 @@ function App() {
           <NavButton active={view === "map"} icon={<MapIcon size={20} />} label="Comparativo" onClick={() => setView("map")} />
           <NavButton active={view === "scorecard"} icon={<SlidersHorizontal size={20} />} label="Scorecard" onClick={() => setView("scorecard")} />
           <NavButton active={view === "charts"} icon={<BarChart3 size={20} />} label="Gráficos" onClick={() => setView("charts")} />
+          <NavButton active={view === "inequalities"} icon={<UsersRound size={20} />} label="Desigualdades" onClick={() => setView("inequalities")} />
           <NavButton active={view === "dictionary"} icon={<BookOpenText size={20} />} label="Dicionário" onClick={() => setView("dictionary")} />
         </nav>
         <div className="sidebar-note">
@@ -232,6 +270,7 @@ function App() {
         {view === "map" && <CompareView rows={ranked} year={year} indicator={indicator} setIndicator={setIndicator} indicators={indicators} />}
         {view === "scorecard" && selected && <Scorecard data={data} selected={selected} year={year} selectedCode={selectedCode} setSelectedCode={setSelectedCode} />}
         {view === "charts" && <ChartsPage data={data} year={year} />}
+        {view === "inequalities" && <InequalitiesPage data={data} year={year} />}
         {view === "dictionary" && <Dictionary data={data} />}
       </main>
     </div>
@@ -245,6 +284,7 @@ function titleFor(view: View) {
     map: "Comparativo Territorial",
     scorecard: "Scorecard da UF",
     charts: "Análises Gráficas",
+    inequalities: "Desigualdades",
     dictionary: "Dicionário de Dados",
   }[view];
 }
@@ -294,6 +334,24 @@ function StateSelect({ label, value, onChange, rows }: { label: string; value: s
           {rows.map((row) => (
             <option key={row.code} value={row.code}>
               {row.territory}
+            </option>
+          ))}
+        </select>
+        <ChevronDown size={16} />
+      </div>
+    </label>
+  );
+}
+
+function PairSelect({ value, onChange }: { value: InequalityPairKey; onChange: (value: InequalityPairKey) => void }) {
+  return (
+    <label className="select-wrap">
+      <span>Recorte</span>
+      <div>
+        <select value={value} onChange={(event) => onChange(event.target.value as InequalityPairKey)}>
+          {(Object.keys(INEQUALITY_PAIRS) as InequalityPairKey[]).map((key) => (
+            <option key={key} value={key}>
+              {INEQUALITY_PAIRS[key].label}
             </option>
           ))}
         </select>
@@ -440,7 +498,7 @@ function CompareView({ rows, year, indicator, setIndicator, indicators }: { rows
 }
 
 function Scorecard({ data, selected, year, selectedCode, setSelectedCode }: { data: DashboardData; selected: RecordRow; year: number; selectedCode: string; setSelectedCode: (value: string) => void }) {
-  const rows = data.records.filter((row) => row.year === year && row.territory !== "Brasil").sort((a, b) => a.territory.localeCompare(b.territory, "pt-BR"));
+  const rows = territoryRows(data, year);
   const trend = data.years.map((itemYear) => {
     const row = data.records.find((record) => record.year === itemYear && record.code === selected.code);
     return { year: itemYear, IDHM: row ? getValue(row, IDHM) : null };
@@ -450,13 +508,14 @@ function Scorecard({ data, selected, year, selectedCode, setSelectedCode }: { da
     <div className="scorecard-page">
       <section className="scorecard-header">
         <div className="scorecard-identity">
-          <Select label="UF" value={selectedCode} onChange={setSelectedCode} options={rows.map((row) => row.code)} />
+          <Select label="Território" value={selectedCode} onChange={setSelectedCode} options={rows.map((row) => row.code)} />
           <p>{selected.territory}</p>
           <span>{selected.region}</span>
         </div>
         <div className="scorecard-kpis">
           <ScoreKpi title="IDHM" subtitle={String(year)} value={formatNumber(getValue(selected, IDHM))} tone={rankTone(selected.ranks[IDHM])} rank={formatRank(selected.ranks[IDHM]?.br)} />
           <ScoreKpi title="Renda" subtitle="Dimensão" value={formatNumber(getValue(selected, "IDHM Renda"))} tone={rankTone(selected.ranks["IDHM Renda"])} rank={formatRank(selected.ranks["IDHM Renda"]?.br)} />
+          <ScoreKpi title="Longevidade" subtitle="Dimensão" value={formatNumber(getValue(selected, "IDHM Longevidade"))} tone={rankTone(selected.ranks["IDHM Longevidade"])} rank={formatRank(selected.ranks["IDHM Longevidade"]?.br)} />
           <ScoreKpi title="Educação" subtitle="Dimensão" value={formatNumber(getValue(selected, "IDHM Educação"))} tone={rankTone(selected.ranks["IDHM Educação"])} rank={formatRank(selected.ranks["IDHM Educação"]?.br)} />
         </div>
       </section>
@@ -467,7 +526,7 @@ function Scorecard({ data, selected, year, selectedCode, setSelectedCode }: { da
           <TrendChart data={trend} />
         </div>
         <div className="panel">
-          <PanelTitle title="Dimensões" subtitle="Leitura sintética da UF selecionada." />
+          <PanelTitle title="Dimensões" subtitle="Leitura sintética do território selecionado." />
           <div className="dimension-list">
             {CORE.map((item) => (
               <Progress key={item} label={item} value={getValue(selected, item)} />
@@ -475,6 +534,8 @@ function Scorecard({ data, selected, year, selectedCode, setSelectedCode }: { da
           </div>
         </div>
       </section>
+
+      <ScorecardInequalities data={data} selected={selected} year={year} />
 
       <section className="dimension-card-grid">
         {[...data.components, ...data.indicators.filter((item) => item.includes("Perda pela desigualdade"))].slice(0, 6).map((item) => (
@@ -506,6 +567,54 @@ function ScoreKpi({ title, subtitle, value, tone, rank }: { title: string; subti
       <p>{value}</p>
       <footer><span>Ranking Brasil: {rank}</span></footer>
     </article>
+  );
+}
+
+function ScorecardInequalities({ data, selected, year }: { data: DashboardData; selected: RecordRow; year: number }) {
+  const groups = ["MULHER", "HOMEM", "BRANCO", "NEGRO"];
+  const rows = groups.map((group) => ({
+    group,
+    IDHM: getDisaggValue(data.disaggregatedRecords, selected.code, year, group, IDHM),
+    renda: getDisaggValue(data.disaggregatedRecords, selected.code, year, group, "IDHM Renda"),
+    longevidade: getDisaggValue(data.disaggregatedRecords, selected.code, year, group, "IDHM Longevidade"),
+    educacao: getDisaggValue(data.disaggregatedRecords, selected.code, year, group, "IDHM Educação"),
+  }));
+  const genderGap = gapFor(data.disaggregatedRecords, selected.code, year, INEQUALITY_PAIRS.gender, IDHM);
+  const raceGap = gapFor(data.disaggregatedRecords, selected.code, year, INEQUALITY_PAIRS.race, IDHM);
+
+  return (
+    <section className="panel">
+      <PanelTitle title="Leitura estratificada" subtitle={`Recortes por gênero e raça/cor disponíveis para ${selected.territory}, ${year}.`} />
+      <div className="inequality-summary-grid">
+        <Metric title="Mulheres - Homens" value={formatSigned(genderGap?.gap)} detail="Diferença no IDHM" />
+        <Metric title="Brancos - Negros" value={formatSigned(raceGap?.gap)} detail="Diferença no IDHM" />
+        <Metric title="Fonte do recorte" value={data.disaggregatedRecords.find((item) => item.code === selected.code && item.year === year)?.source ?? "-"} detail="Censo ou PNAD" />
+      </div>
+      <div className="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Grupo</th>
+              <th>IDHM</th>
+              <th>Renda</th>
+              <th>Longevidade</th>
+              <th>Educação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.group}>
+                <td><strong>{groupLabel(row.group)}</strong></td>
+                <td className="score-cell">{formatNumber(row.IDHM)}</td>
+                <td>{formatNumber(row.renda)}</td>
+                <td>{formatNumber(row.longevidade)}</td>
+                <td>{formatNumber(row.educacao)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -550,14 +659,12 @@ function TrendChart({ data }: { data: { year: number; IDHM: number | null }[] })
 function ChartsPage({ data, year }: { data: DashboardData; year: number }) {
   const [tab, setTab] = useState<ChartTab>("radar");
   const indicators = [...CORE, ...data.indicators.filter((item) => !CORE.includes(item))];
-  const rows = data.records
-    .filter((row) => row.year === year && row.territory !== "Brasil")
-    .sort((a, b) => a.territory.localeCompare(b.territory, "pt-BR"));
+  const rows = territoryRows(data, year);
 
   return (
     <div className="charts-page">
       <div className="chart-tabs">
-        <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>Comparação de UFs</button>
+        <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>Comparação de territórios</button>
         <button className={tab === "regression" ? "active" : ""} onClick={() => setTab("regression")}>Gráfico de regressão</button>
         <button className={tab === "temporal" ? "active" : ""} onClick={() => setTab("temporal")}>Gráfico de evolução temporal</button>
       </div>
@@ -581,7 +688,7 @@ function RadarPanel({ rows }: { rows: RecordRow[] }) {
 
   return (
     <section className="panel chart-panel">
-      <PanelTitle title="Comparação de UFs" subtitle={`Selecione até 6 estados para comparar IDHM e dimensões principais. Escala ampliada: ${formatNumber(radarDomain[0])} a ${formatNumber(radarDomain[1])}.`} />
+      <PanelTitle title="Comparação de territórios" subtitle={`Selecione até 6 territórios para comparar IDHM e dimensões principais. Escala ampliada: ${formatNumber(radarDomain[0])} a ${formatNumber(radarDomain[1])}.`} />
       <StateChipPicker rows={rows} codes={codes} max={6} onChange={setCodes} />
       <div className="large-chart">
         <ResponsiveContainer>
@@ -624,7 +731,7 @@ function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indica
 
   return (
     <section className="panel chart-panel">
-      <PanelTitle title="Gráfico de regressão" subtitle={`Relação entre indicadores das UFs em ${year}.`} />
+      <PanelTitle title="Gráfico de regressão" subtitle={`Relação entre indicadores dos territórios em ${year}.`} />
       <div className="chart-controls two">
         <Select label="Eixo X" value={xIndicator} onChange={setXIndicator} options={indicators} wide />
         <Select label="Eixo Y" value={yIndicator} onChange={setYIndicator} options={indicators} wide />
@@ -636,7 +743,7 @@ function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indica
             <XAxis type="number" dataKey="x" name={xIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
             <YAxis type="number" dataKey="y" name={yIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
             <Tooltip cursor={{ strokeDasharray: "3 3" }} content={<RegressionTooltip xLabel={xIndicator} yLabel={yIndicator} />} />
-            <Scatter name="UFs" data={chartPoints} fill="#006591" fillOpacity={0.7}>
+            <Scatter name="Territórios" data={chartPoints} fill="#006591" fillOpacity={0.7}>
               <LabelList dataKey="label" position="right" className="scatter-label" />
             </Scatter>
             <Line type="linear" data={regressionLine} dataKey="y" stroke="#0f172a" strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -683,10 +790,10 @@ function TemporalPanel({ data, rows, indicators }: { data: DashboardData; rows: 
 
   return (
     <section className="panel chart-panel">
-      <PanelTitle title="Gráfico de evolução temporal" subtitle="Selecione até 7 estados para comparar a evolução anual." />
+      <PanelTitle title="Gráfico de evolução temporal" subtitle="Selecione até 7 territórios para comparar a evolução anual." />
       <div className="chart-controls two">
         <div className="chart-controls nested">
-          <StateSelect label="UF" value={pick} onChange={setPick} rows={rows} />
+          <StateSelect label="Território" value={pick} onChange={setPick} rows={rows} />
           <button className="button" onClick={addState} disabled={!pick || codes.includes(pick) || codes.length >= 7}>Adicionar</button>
         </div>
         <Select label="Indicador" value={indicator} onChange={setIndicator} options={indicators} wide />
@@ -748,41 +855,139 @@ function linearRegression(points: { x: number; y: number }[]) {
   return { slope, intercept };
 }
 
-function ChartsPageOld({ data, year }: { data: DashboardData; year: number }) {
-  const [codes, setCodes] = useState(["PERNAMBUCO", "SÃO PAULO", "CEARÁ"]);
-  const rows = data.records.filter((row) => row.year === year && row.territory !== "Brasil");
-  const selectedRows = codes.map((code) => rows.find((row) => row.code === code)).filter((row): row is RecordRow => Boolean(row));
-  const radarData = CORE.map((indicator) => {
-    const item: Record<string, string | number | null> = { indicator };
-    selectedRows.forEach((row) => { item[row.territory] = getValue(row, indicator); });
-    return item;
-  });
+type GapRow = {
+  code: string;
+  territory: string;
+  region: string;
+  a: number;
+  b: number;
+  gap: number;
+  absGap: number;
+};
+
+function gapFor(records: DisaggregatedRecord[], code: string, year: number, pair: (typeof INEQUALITY_PAIRS)[InequalityPairKey], indicator: string) {
+  const a = getDisaggValue(records, code, year, pair.a, indicator);
+  const b = getDisaggValue(records, code, year, pair.b, indicator);
+  if (typeof a !== "number" || typeof b !== "number") return null;
+  return { a, b, gap: a - b, absGap: Math.abs(a - b) };
+}
+
+function formatSigned(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return "-";
+  return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
+}
+
+function InequalitiesPage({ data, year }: { data: DashboardData; year: number }) {
+  const [pairKey, setPairKey] = useState<InequalityPairKey>("race");
+  const [indicator, setIndicator] = useState(IDHM);
+  const [selectedCode, setSelectedCode] = useState("PERNAMBUCO");
+  const pair = INEQUALITY_PAIRS[pairKey];
+  const stateRows = territoryRows(data, year);
+  const gapRows: GapRow[] = stateRows
+    .filter((row) => row.territory !== "Brasil")
+    .map((row) => {
+      const gap = gapFor(data.disaggregatedRecords, row.code, year, pair, indicator);
+      if (!gap) return null;
+      return { code: row.code, territory: row.territory, region: row.region, ...gap };
+    })
+    .filter((row): row is GapRow => Boolean(row))
+    .sort((a, b) => b.absGap - a.absGap);
+  const selectedGap = gapRows.find((row) => row.code === selectedCode);
+  const selectedTerritory = stateRows.find((row) => row.code === selectedCode)?.territory ?? selectedCode;
+  const avgGap = gapRows.length ? gapRows.reduce((sum, row) => sum + row.absGap, 0) / gapRows.length : null;
+  const topGap = gapRows[0];
 
   return (
-    <section className="panel chart-panel">
-      <PanelTitle title="Comparação de UFs" subtitle="Radar com IDHM e dimensões principais." />
-      <div className="chip-list">
-        {rows.map((row) => (
-          <button key={row.code} onClick={() => setCodes(codes.includes(row.code) ? codes.filter((code) => code !== row.code) : [...codes, row.code].slice(-6))}>
-            {row.territory}
-          </button>
-        ))}
-      </div>
-      <div className="large-chart">
-        <ResponsiveContainer>
-          <RadarChart data={radarData} outerRadius="76%">
-            <PolarGrid />
-            <PolarAngleAxis dataKey="indicator" tick={{ fontSize: 12 }} />
-            <PolarRadiusAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => formatNumber(Number(value))} />
-            <Legend />
-            {selectedRows.map((row, index) => (
-              <Radar key={row.code} name={row.territory} dataKey={row.territory} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.1} strokeWidth={2} />
-            ))}
-          </RadarChart>
-        </ResponsiveContainer>
-      </div>
-    </section>
+    <div className="page-stack">
+      <section className="filters compact-filters">
+        <PairSelect value={pairKey} onChange={setPairKey} />
+        <Select label="Indicador" value={indicator} onChange={setIndicator} options={CORE} wide />
+        <StateSelect label="Território para série" value={selectedCode} onChange={setSelectedCode} rows={stateRows} />
+      </section>
+
+      <section className="metric-grid">
+        <Metric title={selectedTerritory} value={formatNumber(selectedGap?.absGap)} detail={`${pair.gapLabel}: ${formatSigned(selectedGap?.gap)}`} />
+        <Metric title="Maior lacuna" value={topGap?.territory ?? "-"} detail={`${formatNumber(topGap?.absGap)} ponto`} />
+        <Metric title="Média das UFs" value={formatNumber(avgGap)} detail={`Lacuna absoluta em ${indicator}`} />
+      </section>
+
+      <section className="content-grid">
+        <div className="panel">
+          <PanelTitle title="Ranking de lacunas" subtitle={`${pair.label}. Quanto maior, maior a distância entre os grupos.`} />
+          <div className="chart tall">
+            <ResponsiveContainer>
+              <BarChart data={gapRows.slice(0, 12)} layout="vertical" margin={{ top: 10, right: 24, bottom: 10, left: 128 }}>
+                <CartesianGrid horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="territory" width={126} tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value) => formatNumber(Number(value))} />
+                <Bar dataKey="absGap" radius={[0, 5, 5, 0]} fill="#006591" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="panel">
+          <PanelTitle title="Evolução estratificada" subtitle={`${stateRows.find((row) => row.code === selectedCode)?.territory ?? selectedCode} · ${indicator}`} />
+          <DisaggregatedTrend data={data} code={selectedCode} pair={pair} indicator={indicator} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="table-header">
+          <PanelTitle title="Tabela de diferenças" subtitle={`${gapRows.length} UFs com dados disponíveis em ${year}.`} />
+          <span className="legend-dot">{indicator}</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>UF</th>
+                <th>Região</th>
+                <th>{groupLabel(pair.a)}</th>
+                <th>{groupLabel(pair.b)}</th>
+                <th>Diferença</th>
+                <th>Lacuna absoluta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gapRows.map((row) => (
+                <tr key={row.code}>
+                  <td><strong>{row.territory}</strong></td>
+                  <td>{row.region}</td>
+                  <td>{formatNumber(row.a)}</td>
+                  <td>{formatNumber(row.b)}</td>
+                  <td className="score-cell">{formatSigned(row.gap)}</td>
+                  <td>{formatNumber(row.absGap)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DisaggregatedTrend({ data, code, pair, indicator }: { data: DashboardData; code: string; pair: (typeof INEQUALITY_PAIRS)[InequalityPairKey]; indicator: string }) {
+  const rows = data.years.map((year) => ({
+    year,
+    [groupLabel(pair.a)]: getDisaggValue(data.disaggregatedRecords, code, year, pair.a, indicator),
+    [groupLabel(pair.b)]: getDisaggValue(data.disaggregatedRecords, code, year, pair.b, indicator),
+  }));
+  return (
+    <div className="trend-chart">
+      <ResponsiveContainer>
+        <LineChart data={rows} margin={{ top: 20, right: 24, bottom: 20, left: 0 }}>
+          <CartesianGrid vertical={false} stroke="#e2e8f0" />
+          <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+          <YAxis domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(value) => formatNumber(Number(value))} />
+          <Legend />
+          <Line type="monotone" dataKey={groupLabel(pair.a)} stroke="#006591" strokeWidth={3} dot={{ r: 4 }} />
+          <Line type="monotone" dataKey={groupLabel(pair.b)} stroke="#f97316" strokeWidth={3} dot={{ r: 4 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
