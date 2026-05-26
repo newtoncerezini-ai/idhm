@@ -16,6 +16,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -25,6 +26,8 @@ import {
   Radar,
   RadarChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -51,6 +54,7 @@ type DashboardData = {
 };
 
 type View = "overview" | "ranking" | "map" | "scorecard" | "charts" | "dictionary";
+type ChartTab = "radar" | "regression" | "temporal";
 
 const IDHM = "IDHM";
 const CORE = ["IDHM", "IDHM Renda", "IDHM Longevidade", "IDHM Educação"];
@@ -257,6 +261,24 @@ function Select({ label, value, onChange, options, wide = false }: { label: stri
           {options.map((option) => (
             <option key={option} value={option}>
               {option}
+            </option>
+          ))}
+        </select>
+        <ChevronDown size={16} />
+      </div>
+    </label>
+  );
+}
+
+function StateSelect({ label, value, onChange, rows }: { label: string; value: string; onChange: (value: string) => void; rows: RecordRow[] }) {
+  return (
+    <label className="select-wrap">
+      <span>{label}</span>
+      <div>
+        <select value={value} onChange={(event) => onChange(event.target.value)}>
+          {rows.map((row) => (
+            <option key={row.code} value={row.code}>
+              {row.territory}
             </option>
           ))}
         </select>
@@ -511,6 +533,205 @@ function TrendChart({ data }: { data: { year: number; IDHM: number | null }[] })
 }
 
 function ChartsPage({ data, year }: { data: DashboardData; year: number }) {
+  const [tab, setTab] = useState<ChartTab>("radar");
+  const indicators = [...CORE, ...data.indicators.filter((item) => !CORE.includes(item))];
+  const rows = data.records
+    .filter((row) => row.year === year && row.territory !== "Brasil")
+    .sort((a, b) => a.territory.localeCompare(b.territory, "pt-BR"));
+
+  return (
+    <div className="charts-page">
+      <div className="chart-tabs">
+        <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>Comparação de UFs</button>
+        <button className={tab === "regression" ? "active" : ""} onClick={() => setTab("regression")}>Gráfico de regressão</button>
+        <button className={tab === "temporal" ? "active" : ""} onClick={() => setTab("temporal")}>Gráfico de evolução temporal</button>
+      </div>
+      {tab === "radar" && <RadarPanel rows={rows} />}
+      {tab === "regression" && <RegressionPanel rows={rows} indicators={indicators} year={year} />}
+      {tab === "temporal" && <TemporalPanel data={data} rows={rows} indicators={indicators} />}
+    </div>
+  );
+}
+
+function RadarPanel({ rows }: { rows: RecordRow[] }) {
+  const [codes, setCodes] = useState(["PERNAMBUCO", "SÃO PAULO", "CEARÁ"]);
+  const selectedRows = codes.map((code) => rows.find((row) => row.code === code)).filter((row): row is RecordRow => Boolean(row));
+  const radarData = CORE.map((indicator) => {
+    const item: Record<string, string | number | null> = { indicator };
+    selectedRows.forEach((row) => { item[row.territory] = getValue(row, indicator); });
+    return item;
+  });
+
+  return (
+    <section className="panel chart-panel">
+      <PanelTitle title="Comparação de UFs" subtitle="Selecione até 6 estados para comparar IDHM e dimensões principais." />
+      <StateChipPicker rows={rows} codes={codes} max={6} onChange={setCodes} />
+      <div className="large-chart">
+        <ResponsiveContainer>
+          <RadarChart data={radarData} outerRadius="76%">
+            <PolarGrid />
+            <PolarAngleAxis dataKey="indicator" tick={{ fontSize: 12 }} />
+            <PolarRadiusAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(value) => formatNumber(Number(value))} />
+            <Legend />
+            {selectedRows.map((row, index) => (
+              <Radar key={row.code} name={row.territory} dataKey={row.territory} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.1} strokeWidth={2} />
+            ))}
+          </RadarChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+
+function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indicators: string[]; year: number }) {
+  const [xIndicator, setXIndicator] = useState("IDHM Renda");
+  const [yIndicator, setYIndicator] = useState(IDHM);
+  const points = rows
+    .map((row) => ({ x: getValue(row, xIndicator), y: getValue(row, yIndicator), name: row.territory }))
+    .filter((item): item is { x: number; y: number; name: string } => typeof item.x === "number" && typeof item.y === "number");
+  const labeled = new Set([
+    ...[...points].sort((a, b) => b.x - a.x).slice(0, 4).map((item) => item.name),
+    ...[...points].sort((a, b) => b.y - a.y).slice(0, 4).map((item) => item.name),
+    "Pernambuco",
+  ]);
+  const chartPoints = points.map((item) => ({ ...item, label: labeled.has(item.name) ? item.name : "" }));
+  const regression = linearRegression(points);
+  const xValues = points.map((item) => item.x);
+  const regressionLine = xValues.length
+    ? [
+        { x: Math.min(...xValues), y: regression.slope * Math.min(...xValues) + regression.intercept },
+        { x: Math.max(...xValues), y: regression.slope * Math.max(...xValues) + regression.intercept },
+      ]
+    : [];
+
+  return (
+    <section className="panel chart-panel">
+      <PanelTitle title="Gráfico de regressão" subtitle={`Relação entre indicadores das UFs em ${year}.`} />
+      <div className="chart-controls two">
+        <Select label="Eixo X" value={xIndicator} onChange={setXIndicator} options={indicators} wide />
+        <Select label="Eixo Y" value={yIndicator} onChange={setYIndicator} options={indicators} wide />
+      </div>
+      <div className="large-chart">
+        <ResponsiveContainer>
+          <ScatterChart margin={{ top: 20, right: 34, bottom: 36, left: 12 }}>
+            <CartesianGrid stroke="#e2e8f0" />
+            <XAxis type="number" dataKey="x" name={xIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
+            <YAxis type="number" dataKey="y" name={yIndicator} domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
+            <Tooltip cursor={{ strokeDasharray: "3 3" }} content={<RegressionTooltip xLabel={xIndicator} yLabel={yIndicator} />} />
+            <Scatter name="UFs" data={chartPoints} fill="#006591" fillOpacity={0.7}>
+              <LabelList dataKey="label" position="right" className="scatter-label" />
+            </Scatter>
+            <Line type="linear" data={regressionLine} dataKey="y" stroke="#0f172a" strokeWidth={2} dot={false} isAnimationActive={false} />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+
+function RegressionTooltip({ active, payload, xLabel, yLabel }: { active?: boolean; payload?: Array<{ payload?: { name?: string; x?: number; y?: number } }>; xLabel: string; yLabel: string }) {
+  if (!active || !payload?.length) return null;
+  const point = payload.find((item) => item.payload?.name)?.payload;
+  if (!point) return null;
+  return (
+    <div className="regression-tooltip-card">
+      <strong>{point.name}</strong>
+      <span>{xLabel}: {formatNumber(point.x)}</span>
+      <span>{yLabel}: {formatNumber(point.y)}</span>
+    </div>
+  );
+}
+
+function TemporalPanel({ data, rows, indicators }: { data: DashboardData; rows: RecordRow[]; indicators: string[] }) {
+  const [codes, setCodes] = useState(["PERNAMBUCO", "SÃO PAULO", "CEARÁ"]);
+  const [pick, setPick] = useState(rows[0]?.code ?? "");
+  const [indicator, setIndicator] = useState(IDHM);
+
+  const addState = () => {
+    if (pick && !codes.includes(pick) && codes.length < 7) setCodes([...codes, pick]);
+  };
+
+  const chartRows = data.years.map((itemYear) => {
+    const item: Record<string, string | number | null> = { year: itemYear };
+    codes.forEach((code) => {
+      const row = data.records.find((record) => record.year === itemYear && record.code === code);
+      if (row) item[row.territory] = getValue(row, indicator);
+    });
+    return item;
+  });
+  const names = codes
+    .map((code) => rows.find((row) => row.code === code)?.territory)
+    .filter((name): name is string => Boolean(name));
+
+  return (
+    <section className="panel chart-panel">
+      <PanelTitle title="Gráfico de evolução temporal" subtitle="Selecione até 7 estados para comparar a evolução anual." />
+      <div className="chart-controls two">
+        <div className="chart-controls nested">
+          <StateSelect label="UF" value={pick} onChange={setPick} rows={rows} />
+          <button className="button" onClick={addState} disabled={!pick || codes.includes(pick) || codes.length >= 7}>Adicionar</button>
+        </div>
+        <Select label="Indicador" value={indicator} onChange={setIndicator} options={indicators} wide />
+      </div>
+      <SelectedStateChips codes={codes} rows={rows} onRemove={(code) => setCodes(codes.filter((item) => item !== code))} />
+      <div className="large-chart">
+        <ResponsiveContainer>
+          <LineChart data={chartRows} margin={{ top: 20, right: 32, bottom: 28, left: 10 }}>
+            <CartesianGrid vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis domain={["dataMin", "dataMax"]} tick={{ fontSize: 12 }} />
+            <Tooltip formatter={(value) => formatNumber(Number(value))} />
+            <Legend />
+            {names.map((name, index) => (
+              <Line key={name} type="monotone" dataKey={name} stroke={COLORS[index % COLORS.length]} strokeWidth={3} dot={{ r: 4 }} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+
+function StateChipPicker({ rows, codes, max, onChange }: { rows: RecordRow[]; codes: string[]; max: number; onChange: (codes: string[]) => void }) {
+  return (
+    <div className="chip-list">
+      {rows.map((row) => (
+        <button key={row.code} className={codes.includes(row.code) ? "active" : ""} onClick={() => onChange(codes.includes(row.code) ? codes.filter((code) => code !== row.code) : [...codes, row.code].slice(-max))}>
+          {row.territory}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SelectedStateChips({ rows, codes, onRemove }: { rows: RecordRow[]; codes: string[]; onRemove: (code: string) => void }) {
+  const names = new Map(rows.map((row) => [row.code, row.territory]));
+  return (
+    <div className="chip-list selected">
+      {codes.map((code) => (
+        <button key={code} onClick={() => onRemove(code)}>
+          {names.get(code) ?? code}
+          <span>×</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function linearRegression(points: { x: number; y: number }[]) {
+  const n = points.length || 1;
+  const sumX = points.reduce((sum, item) => sum + item.x, 0);
+  const sumY = points.reduce((sum, item) => sum + item.y, 0);
+  const sumXY = points.reduce((sum, item) => sum + item.x * item.y, 0);
+  const sumXX = points.reduce((sum, item) => sum + item.x * item.x, 0);
+  const denominator = n * sumXX - sumX * sumX;
+  const slope = denominator === 0 ? 0 : (n * sumXY - sumX * sumY) / denominator;
+  const intercept = sumY / n - slope * (sumX / n);
+  return { slope, intercept };
+}
+
+function ChartsPageOld({ data, year }: { data: DashboardData; year: number }) {
   const [codes, setCodes] = useState(["PERNAMBUCO", "SÃO PAULO", "CEARÁ"]);
   const rows = data.records.filter((row) => row.year === year && row.territory !== "Brasil");
   const selectedRows = codes.map((code) => rows.find((row) => row.code === code)).filter((row): row is RecordRow => Boolean(row));

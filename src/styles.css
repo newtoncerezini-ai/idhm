@@ -1415,6 +1415,11 @@ td {
   align-items: end;
 }
 
+.chart-controls.nested {
+  grid-template-columns: minmax(220px, 1fr) auto;
+  margin-top: 0;
+}
+
 .chart-controls .button:disabled {
   opacity: .5;
   cursor: not-allowed;
@@ -1438,6 +1443,18 @@ td {
   background: #fbfdf1;
   color: #0f172a;
   cursor: pointer;
+}
+
+.chip-list button.active {
+  border-color: #006591;
+  background: #e1f0f6;
+  color: #006591;
+  font-weight: 800;
+}
+
+.chip-list.selected button {
+  border-color: #d9e2aa;
+  background: #fbfdf1;
 }
 
 .chip-list span {
