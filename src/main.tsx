@@ -720,8 +720,7 @@ function RegressionPanel({ rows, indicators, year }: { rows: RecordRow[]; indica
     "Pernambuco",
   ]);
   const chartPoints = points.map((item) => ({ ...item, label: labeled.has(item.name) ? item.name : "" }));
-  const axisMax = Math.max(0.9, ...points.flatMap((item) => [item.x, item.y])) + 0.01;
-  const axisDomain = [0.6, Math.min(1, axisMax)] as [number, number];
+  const axisDomain = [0.6, 1] as [number, number];
   const bisectorLine = [
     { x: axisDomain[0], y: axisDomain[0] },
     { x: axisDomain[1], y: axisDomain[1] },
